@@ -13,15 +13,72 @@
     </header>
 
     <main>
-      <section id="activities-container">
+      <section id="auth-container">
+        <h3>Welcome back</h3>
+        <p id="auth-intro">Sign in or create an account to join campus activities.</p>
+
+        <div class="auth-tabs" role="tablist" aria-label="Account actions">
+          <button type="button" class="auth-tab active" data-auth-mode="login">Sign in</button>
+          <button type="button" class="auth-tab" data-auth-mode="register">Create account</button>
+        </div>
+
+        <form id="login-form" class="auth-form">
+          <div class="form-group">
+            <label for="login-email">Email address</label>
+            <input type="email" id="login-email" required autocomplete="email" />
+          </div>
+          <div class="form-group">
+            <label for="login-password">Password</label>
+            <input type="password" id="login-password" required autocomplete="current-password" />
+          </div>
+          <button type="submit">Sign in</button>
+        </form>
+
+        <form id="register-form" class="auth-form hidden">
+          <div class="form-group">
+            <label for="register-email">Email address</label>
+            <input type="email" id="register-email" required autocomplete="email" />
+          </div>
+          <div class="form-group">
+            <label for="register-password">Password</label>
+            <input type="password" id="register-password" required minlength="8" autocomplete="new-password" />
+          </div>
+          <div class="form-group">
+            <label for="register-role">I am joining as</label>
+            <select id="register-role" required>
+              <option value="">Select a role</option>
+              <option value="student">Student</option>
+              <option value="organizer">Club Organizer</option>
+              <option value="faculty">Faculty</option>
+              <option value="administrator">Administrator</option>
+            </select>
+          </div>
+          <button type="submit">Create account</button>
+        </form>
+        <div id="auth-message" class="hidden" role="alert"></div>
+      </section>
+
+      <div id="app-shell" class="hidden">
+        <div class="user-bar">
+          <div>
+            <span class="eyebrow">Signed in as</span>
+            <strong id="current-user"></strong>
+            <span id="current-role" class="role-badge"></span>
+          </div>
+          <button id="logout-button" type="button" class="secondary-button">Sign out</button>
+        </div>
+
+        <div id="role-notice" class="role-notice hidden"></div>
+
+        <section id="activities-container">
         <h3>Available Activities</h3>
         <div id="activities-list">
           <!-- Activities will be loaded here -->
           <p>Loading activities...</p>
         </div>
-      </section>
+        </section>
 
-      <section id="signup-container">
+        <section id="signup-container">
         <h3>Sign Up for an Activity</h3>
         <form id="signup-form">
           <div class="form-group">
@@ -38,7 +95,8 @@
           <button type="submit">Sign Up</button>
         </form>
         <div id="message" class="hidden"></div>
-      </section>
+        </section>
+      </div>
     </main>
 
     <footer>

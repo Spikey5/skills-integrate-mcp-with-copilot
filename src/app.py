@@ -5,11 +5,18 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+import hashlib
+import hmac
+import re
+import secrets
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
-from pathlib import Path
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -18,6 +25,70 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+ROLES = {
+    "student": "Student",
+    "organizer": "Club Organizer",
+    "faculty": "Faculty",
+    "administrator": "Administrator",
+}
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+users = {}
+sessions = {}
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+class AuthRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterRequest(AuthRequest):
+    role: str
+
+
+def hash_password(password: str, salt: str | None = None) -> str:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), salt.encode(), 120_000
+    ).hex()
+    return f"{salt}${digest}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    salt, expected_digest = stored_hash.split("$", 1)
+    actual_digest = hash_password(password, salt).split("$", 1)[1]
+    return hmac.compare_digest(actual_digest, expected_digest)
+
+
+def validate_email(email: str) -> str:
+    normalized_email = email.strip().lower()
+    if not EMAIL_PATTERN.fullmatch(normalized_email):
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+    return normalized_email
+
+
+def user_response(email: str) -> dict:
+    role = users[email]["role"]
+    return {"email": email, "role": role, "role_label": ROLES[role]}
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> dict:
+    if credentials is None or credentials.credentials not in sessions:
+        raise HTTPException(status_code=401, detail="Please sign in to continue")
+    email = sessions[credentials.credentials]
+    return {"email": email, **users[email]}
+
+
+def require_roles(*allowed_roles: str):
+    def role_dependency(user: dict = Depends(get_current_user)) -> dict:
+        if user["role"] not in allowed_roles:
+            raise HTTPException(status_code=403, detail="This action is not available for your role")
+        return user
+
+    return role_dependency
 
 # In-memory activity database
 activities = {
@@ -83,14 +154,58 @@ def root():
     return RedirectResponse(url="/static/index.html")
 
 
+@app.post("/auth/register")
+def register(request: RegisterRequest):
+    email = validate_email(request.email)
+    role = request.role.strip().lower()
+    if role not in ROLES:
+        raise HTTPException(status_code=400, detail="Select a valid role")
+    if len(request.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if email in users:
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+
+    users[email] = {"password_hash": hash_password(request.password), "role": role}
+    token = secrets.token_urlsafe(32)
+    sessions[token] = email
+    return {"token": token, "user": user_response(email)}
+
+
+@app.post("/auth/login")
+def login(request: AuthRequest):
+    email = validate_email(request.email)
+    user = users.get(email)
+    if user is None or not verify_password(request.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Email or password is incorrect")
+
+    token = secrets.token_urlsafe(32)
+    sessions[token] = email
+    return {"token": token, "user": user_response(email)}
+
+
+@app.get("/auth/me")
+def get_me(user: dict = Depends(get_current_user)):
+    return user_response(user["email"])
+
+
+@app.post("/auth/logout")
+def logout(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+):
+    if credentials is not None:
+        sessions.pop(credentials.credentials, None)
+    return {"message": "Signed out successfully"}
+
+
 @app.get("/activities")
 def get_activities():
     return activities
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(activity_name: str, user: dict = Depends(require_roles("student"))):
     """Sign up a student for an activity"""
+    email = user["email"]
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -111,8 +226,9 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(activity_name: str, user: dict = Depends(get_current_user)):
     """Unregister a student from an activity"""
+    email = user["email"]
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
